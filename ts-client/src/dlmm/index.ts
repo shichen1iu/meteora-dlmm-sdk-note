@@ -1,4 +1,4 @@
-import { AnchorProvider, BN, Program } from "@coral-xyz/anchor";
+import { AnchorProvider, BN, IdlAccounts, Program } from "@coral-xyz/anchor";
 import {
   AccountLayout,
   Mint,
@@ -12,7 +12,6 @@ import {
 } from "@solana/spl-token";
 import {
   AccountMeta,
-  Cluster,
   ComputeBudgetProgram,
   Connection,
   PublicKey,
@@ -28,12 +27,11 @@ import {
   BIN_ARRAY_BITMAP_FEE_BN,
   BIN_ARRAY_FEE,
   BIN_ARRAY_FEE_BN,
-  LBCLMM_PROGRAM_IDS as DLMM_PROGRAM_IDS,
   FEE_PRECISION,
   MAX_ACTIVE_BIN_SLIPPAGE,
   MAX_BIN_ARRAY_SIZE,
   MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX,
-  MAX_BIN_PER_POSITION,
+  DEFAULT_BIN_PER_POSITION,
   MAX_BIN_PER_TX,
   MAX_CLAIM_ALL_ALLOWED,
   MAX_EXTRA_BIN_ARRAYS,
@@ -51,6 +49,8 @@ import {
   chunkedGetMultipleAccountInfos,
   chunks,
   computeFeeFromAmount,
+  createProgram,
+  decodeAccount,
   deriveBinArray,
   deriveBinArrayBitmapExtension,
   deriveCustomizablePermissionlessLbPair,
@@ -74,6 +74,7 @@ import {
   getTotalFee,
   isBinIdWithinBinArray,
   isOverflowDefaultBinArrayBitmap,
+  Opt,
   range,
   swapExactInQuoteAtBin,
   swapExactOutQuoteAtBin,
@@ -115,7 +116,8 @@ import {
   getExtraAccountMetasForTransferHook,
   getMultipleMintsExtraAccountMetasForTransferHook,
 } from "./helpers/token_2022";
-import { IDL } from "./idl";
+import { LbClmm } from "./idl";
+import IDL from "../../../idls/dlmm_zc.json";
 import {
   ActionType,
   ActivationType,
@@ -168,12 +170,6 @@ import {
   SeedLiquiditySingleBinResponse,
 } from "./types";
 import { bs58 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
-import { u64 } from "@coral-xyz/borsh";
-
-type Opt = {
-  cluster?: Cluster | "localhost";
-  programId?: PublicKey;
-};
 
 export class DLMM {
   constructor(
@@ -204,17 +200,7 @@ export class DLMM {
     connection: Connection,
     opt?: Opt
   ): Promise<LbPairAccount[]> {
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[opt?.cluster ?? "mainnet-beta"],
-      provider
-    );
-
+    const program = createProgram(connection, opt);
     return program.account.lbPair.all();
   }
 
@@ -238,18 +224,7 @@ export class DLMM {
     baseFeePowerFactor: BN,
     opt?: Opt
   ): Promise<PublicKey | null> {
-    const cluster = opt?.cluster || "mainnet-beta";
-
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     try {
       const [lbPair2Key] = deriveLbPair2(
@@ -318,18 +293,7 @@ export class DLMM {
     tokenY: PublicKey,
     opt?: Opt
   ): Promise<PublicKey | null> {
-    const cluster = opt?.cluster || "mainnet-beta";
-
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     try {
       const [lpPair] = deriveCustomizablePermissionlessLbPair(
@@ -360,18 +324,7 @@ export class DLMM {
     dlmm: PublicKey,
     opt?: Opt
   ): Promise<DLMM> {
-    const cluster = opt?.cluster || "mainnet-beta";
-
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const binArrayBitMapExtensionPubkey = deriveBinArrayBitmapExtension(
       dlmm,
@@ -392,8 +345,9 @@ export class DLMM {
     if (!lbPairAccountInfoBuffer)
       throw new Error(`LB Pair account ${dlmm.toBase58()} not found`);
 
-    const lbPairAccInfo: LbPair = program.coder.accounts.decode(
-      program.account.lbPair.idlAccount.name,
+    const lbPairAccInfo = decodeAccount<LbPair>(
+      program,
+      "lbPair",
       lbPairAccountInfoBuffer
     );
 
@@ -401,8 +355,9 @@ export class DLMM {
 
     let binArrayBitMapExtensionAccInfo: BinArrayBitmapExtension | null = null;
     if (binArrayBitMapAccountInfoBuffer) {
-      binArrayBitMapExtensionAccInfo = program.coder.accounts.decode(
-        program.account.binArrayBitmapExtension.idlAccount.name,
+      binArrayBitMapExtensionAccInfo = decodeAccount(
+        program,
+        "binArrayBitmapExtension",
         binArrayBitMapAccountInfoBuffer
       );
     }
@@ -570,18 +525,7 @@ export class DLMM {
     dlmmList: Array<PublicKey>,
     opt?: Opt
   ): Promise<DLMM[]> {
-    const cluster = opt?.cluster || "mainnet-beta";
-
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const binArrayBitMapExtensions = dlmmList.map(
       (lbPair) => deriveBinArrayBitmapExtension(lbPair, program.programId)[0]
@@ -608,11 +552,12 @@ export class DLMM {
       const lbPairAccountInfoBuffer = accountsInfo[i]?.data;
       if (!lbPairAccountInfoBuffer)
         throw new Error(`LB Pair account ${lbPairPubKey.toBase58()} not found`);
-      const binArrayAccInfo = program.coder.accounts.decode(
-        program.account.lbPair.idlAccount.name,
+      const lbPairAccInfo = decodeAccount<LbPair>(
+        program,
+        "lbPair",
         lbPairAccountInfoBuffer
       );
-      lbPairArraysMap.set(lbPairPubKey.toBase58(), binArrayAccInfo);
+      lbPairArraysMap.set(lbPairPubKey.toBase58(), lbPairAccInfo);
     }
 
     const binArrayBitMapExtensionsMap = new Map<
@@ -624,10 +569,12 @@ export class DLMM {
       const lbPairPubkey = dlmmList[index];
       const binArrayBitMapAccountInfoBuffer = accountsInfo[i]?.data;
       if (binArrayBitMapAccountInfoBuffer) {
-        const binArrayBitMapExtensionAccInfo = program.coder.accounts.decode(
-          program.account.binArrayBitmapExtension.idlAccount.name,
-          binArrayBitMapAccountInfoBuffer
-        );
+        const binArrayBitMapExtensionAccInfo =
+          decodeAccount<BinArrayBitmapExtension>(
+            program,
+            "binArrayBitmapExtension",
+            binArrayBitMapAccountInfoBuffer
+          );
         binArrayBitMapExtensionsMap.set(
           lbPairPubkey.toBase58(),
           binArrayBitMapExtensionAccInfo
@@ -857,17 +804,7 @@ export class DLMM {
    * - `presetParameter2`: The preset parameter accounts for the `PresetParameter2` struct.
    */
   static async getAllPresetParameters(connection: Connection, opt?: Opt) {
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[opt?.cluster ?? "mainnet-beta"],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const [presetParameter, presetParameter2] = await Promise.all([
       program.account.presetParameter.all(),
@@ -896,18 +833,7 @@ export class DLMM {
     userPubKey: PublicKey,
     opt?: Opt
   ): Promise<Map<string, PositionInfo>> {
-    const cluster = opt?.cluster || "mainnet-beta";
-
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const positionsV2 = await program.account.positionV2.all([
       positionOwnerFilter(userPubKey),
@@ -948,8 +874,9 @@ export class DLMM {
       const binArrayPubkey = binArrayPubkeyArrayV2[i];
       const binArrayAccInfoBufferV2 = binArraysAccInfo[i];
       if (binArrayAccInfoBufferV2) {
-        const binArrayAccInfo: BinArray = program.coder.accounts.decode(
-          program.account.binArray.idlAccount.name,
+        const binArrayAccInfo = decodeAccount<BinArray>(
+          program,
+          "binArray",
           binArrayAccInfoBufferV2.data
         );
         positionBinArraysMapV2.set(binArrayPubkey.toBase58(), binArrayAccInfo);
@@ -966,8 +893,9 @@ export class DLMM {
       const lbPairAccInfoBufferV2 = binArraysAccInfo[i];
       if (!lbPairAccInfoBufferV2)
         throw new Error(`LB Pair account ${lbPairPubkey.toBase58()} not found`);
-      const lbPairAccInfo = program.coder.accounts.decode(
-        program.account.lbPair.idlAccount.name,
+      const lbPairAccInfo = decodeAccount<LbPair>(
+        program,
+        "lbPair",
         lbPairAccInfoBufferV2.data
       );
       lbPairMap.set(lbPairPubkey.toBase58(), lbPairAccInfo);
@@ -1260,8 +1188,9 @@ export class DLMM {
         throw new Error(
           `Bin Array account ${binArrayPubkey.toBase58()} not found`
         );
-      const binArrayAccInfo = this.program.coder.accounts.decode(
-        this.program.account.binArray.idlAccount.name,
+      const binArrayAccInfo = decodeAccount<BinArray>(
+        this.program,
+        "binArray",
         binArrayAccBufferV2.data
       );
       positionBinArraysMapV2.set(binArrayPubkey.toBase58(), binArrayAccInfo);
@@ -1327,16 +1256,7 @@ export class DLMM {
     creatorPoolOnOffControl?: boolean,
     opt?: Opt
   ): Promise<Transaction> {
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[opt.cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const [tokenBadgeX] = deriveTokenBadge(tokenX, program.programId);
     const [tokenBadgeY] = deriveTokenBadge(tokenY, program.programId);
@@ -1346,7 +1266,7 @@ export class DLMM {
       tokenYAccount,
       tokenBadgeXAccount,
       tokenBadgeYAccount,
-    ] = await provider.connection.getMultipleAccountsInfo([
+    ] = await connection.getMultipleAccountsInfo([
       tokenX,
       tokenY,
       tokenBadgeX,
@@ -1405,7 +1325,7 @@ export class DLMM {
 
     return program.methods
       .initializeCustomizablePermissionlessLbPair2(ixData)
-      .accounts({
+      .accountsPartial({
         tokenBadgeX: tokenBadgeXAccount ? tokenBadgeX : program.programId,
         tokenBadgeY: tokenBadgeYAccount ? tokenBadgeY : program.programId,
         lbPair,
@@ -1454,20 +1374,7 @@ export class DLMM {
     creatorPoolOnOffControl?: boolean,
     opt?: Opt
   ): Promise<Transaction> {
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[opt.cluster],
-      provider
-    );
-
-    const [mintXAccount, mintYAccount] =
-      await connection.getMultipleAccountsInfo([tokenX, tokenY]);
+    const program = createProgram(connection, opt);
 
     const [lbPair] = deriveCustomizablePermissionlessLbPair(
       tokenX,
@@ -1514,14 +1421,13 @@ export class DLMM {
 
     return program.methods
       .initializeCustomizablePermissionlessLbPair(ixData)
-      .accounts({
+      .accountsPartial({
         lbPair,
         reserveX,
         reserveY,
         binArrayBitmapExtension,
         tokenMintX: tokenX,
         tokenMintY: tokenY,
-
         oracle,
         systemProgram: SystemProgram.programId,
         userTokenX,
@@ -1556,16 +1462,7 @@ export class DLMM {
     activeId: BN,
     opt?: Opt
   ): Promise<Transaction> {
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[opt.cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const existsPool = await this.getPairPubkeyIfExists(
       connection,
@@ -1601,7 +1498,7 @@ export class DLMM {
 
     return program.methods
       .initializeLbPair(activeId.toNumber(), binStep.toNumber())
-      .accounts({
+      .accountsPartial({
         funder,
         lbPair,
         rent: SYSVAR_RENT_PUBKEY,
@@ -1639,16 +1536,7 @@ export class DLMM {
     activeId: BN,
     opt?: Opt
   ): Promise<Transaction> {
-    const provider = new AnchorProvider(
-      connection,
-      {} as any,
-      AnchorProvider.defaultOptions()
-    );
-    const program = new Program(
-      IDL,
-      opt?.programId ?? DLMM_PROGRAM_IDS[opt.cluster],
-      provider
-    );
+    const program = createProgram(connection, opt);
 
     const [tokenBadgeX] = deriveTokenBadge(tokenX, program.programId);
     const [tokenBadgeY] = deriveTokenBadge(tokenY, program.programId);
@@ -1658,7 +1546,7 @@ export class DLMM {
       tokenYAccount,
       tokenBadgeXAccount,
       tokenBadgeYAccount,
-    ] = await provider.connection.getMultipleAccountsInfo([
+    ] = await connection.getMultipleAccountsInfo([
       tokenX,
       tokenY,
       tokenBadgeX,
@@ -1704,7 +1592,7 @@ export class DLMM {
         activeId: activeId.toNumber(),
         padding: Array(96).fill(0),
       })
-      .accounts({
+      .accountsPartial({
         funder,
         lbPair,
         reserveX,
@@ -1759,15 +1647,18 @@ export class DLMM {
       SYSVAR_CLOCK_PUBKEY,
     ]);
 
-    const lbPairState: LbPair = this.program.coder.accounts.decode(
-      this.program.account.lbPair.idlAccount.name,
+    const lbPairState = decodeAccount<LbPair>(
+      this.program,
+      "lbPair",
       lbPairAccountInfo.data
     );
     if (binArrayBitmapExtensionAccountInfo) {
-      const binArrayBitmapExtensionState = this.program.coder.accounts.decode(
-        this.program.account.binArrayBitmapExtension.idlAccount.name,
-        binArrayBitmapExtensionAccountInfo.data
-      );
+      const binArrayBitmapExtensionState =
+        decodeAccount<BinArrayBitmapExtension>(
+          this.program,
+          "binArrayBitmapExtension",
+          binArrayBitmapExtensionAccountInfo.data
+        );
 
       if (binArrayBitmapExtensionState) {
         this.binArrayBitmapExtension = {
@@ -1897,7 +1788,7 @@ export class DLMM {
 
     const tx = await this.program.methods
       .setPairStatusPermissionless(status)
-      .accounts({
+      .accountsPartial({
         lbPair: this.pubkey,
         creator,
       })
@@ -1979,8 +1870,9 @@ export class DLMM {
 
     const binArrays: BinArrayAccount[] = await Promise.all(
       binArraysAccInfoBuffer.map(async (accInfo, idx) => {
-        const account: BinArray = this.program.coder.accounts.decode(
-          this.program.account.binArray.idlAccount.name,
+        const account = decodeAccount<BinArray>(
+          this.program,
+          "binArray",
           accInfo.data
         );
         const publicKey = accountsToFetch[idx];
@@ -2328,8 +2220,9 @@ export class DLMM {
       const binArrayPubkey = binArrayPubkeyArrayV2[i];
       const binArrayAccBufferV2 = binArraysAccInfo[i];
       if (binArrayAccBufferV2) {
-        const binArrayAccInfo = this.program.coder.accounts.decode(
-          this.program.account.binArray.idlAccount.name,
+        const binArrayAccInfo = decodeAccount<BinArray>(
+          this.program,
+          "binArray",
           binArrayAccBufferV2.data
         );
         positionBinArraysMapV2.set(binArrayPubkey.toBase58(), binArrayAccInfo);
@@ -2409,7 +2302,7 @@ export class DLMM {
   }) {
     const createPositionIx = await this.program.methods
       .initializePosition(minBinId, maxBinId - minBinId + 1)
-      .accounts({
+      .accountsPartial({
         payer: user,
         position: positionPubKey,
         lbPair: this.pubkey,
@@ -2493,8 +2386,9 @@ export class DLMM {
 
     for (let i = 0; i < binArrayAccountsInfo.length; i++) {
       if (binArrayAccountsInfo[i]) {
-        const binArrayState: BinArray = this.program.coder.accounts.decode(
-          this.program.account.binArray.idlAccount.name,
+        const binArrayState = decodeAccount<BinArray>(
+          this.program,
+          "binArray",
           binArrayAccountsInfo[i].data
         );
 
@@ -2548,7 +2442,7 @@ export class DLMM {
     const preInstructions: TransactionInstruction[] = [];
     const initializePositionIx = await this.program.methods
       .initializePosition(minBinId, maxBinId - minBinId + 1)
-      .accounts({
+      .accountsPartial({
         payer: user,
         position: positionPubKey,
         lbPair: this.pubkey,
@@ -2677,7 +2571,7 @@ export class DLMM {
     );
 
     const addLiquidityIx = await programMethod
-      .accounts(addLiquidityAccounts)
+      .accountsPartial(addLiquidityAccounts)
       .remainingAccounts(transferHookAccounts)
       .remainingAccounts(binArrayAccountMetas)
       .instruction();
@@ -2735,16 +2629,16 @@ export class DLMM {
       ? Math.ceil(slippage / (this.lbPair.binStep / 100))
       : MAX_ACTIVE_BIN_SLIPPAGE;
 
-    if (upperBinId >= lowerBinId + MAX_BIN_PER_POSITION.toNumber()) {
+    if (upperBinId >= lowerBinId + DEFAULT_BIN_PER_POSITION.toNumber()) {
       throw new Error(
-        `Position must be within a range of 1 to ${MAX_BIN_PER_POSITION.toNumber()} bins.`
+        `Position must be within a range of 1 to ${DEFAULT_BIN_PER_POSITION.toNumber()} bins.`
       );
     }
 
     const preInstructions: Array<TransactionInstruction> = [];
     const initializePositionIx = await this.program.methods
       .initializePosition(lowerBinId, upperBinId - lowerBinId + 1)
-      .accounts({
+      .accountsPartial({
         payer: user,
         position: positionPubKey,
         lbPair: this.pubkey,
@@ -2915,7 +2809,7 @@ export class DLMM {
 
     if (xYAmountDistribution.length < MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX) {
       const addLiqIx = await programMethod
-        .accounts(
+        .accountsPartial(
           isOneSideDeposit ? oneSideAddLiquidityAccounts : addLiquidityAccounts
         )
         .instruction();
@@ -2940,7 +2834,7 @@ export class DLMM {
     }
 
     const addLiqIx = await programMethod
-      .accounts(
+      .accountsPartial(
         isOneSideDeposit ? oneSideAddLiquidityAccounts : addLiquidityAccounts
       )
       .instruction();
@@ -3133,7 +3027,7 @@ export class DLMM {
     );
 
     const addLiquidityIx = await programMethod
-      .accounts(addLiquidityAccounts)
+      .accountsPartial(addLiquidityAccounts)
       .remainingAccounts(transferHookAccounts)
       .remainingAccounts(binArrayAccountsMeta)
       .instruction();
@@ -3367,7 +3261,7 @@ export class DLMM {
 
     if (xYAmountDistribution.length < MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX) {
       const addLiqIx = await programMethod
-        .accounts(
+        .accountsPartial(
           isOneSideDeposit ? oneSideAddLiquidityAccounts : addLiquidityAccounts
         )
         .instruction();
@@ -3392,7 +3286,7 @@ export class DLMM {
     }
 
     const addLiqIx = await programMethod
-      .accounts(
+      .accountsPartial(
         isOneSideDeposit ? oneSideAddLiquidityAccounts : addLiquidityAccounts
       )
       .instruction();
@@ -3569,7 +3463,7 @@ export class DLMM {
         .claimFee2(fromBinId, toBinId, {
           slices,
         })
-        .accounts({
+        .accountsPartial({
           lbPair: this.pubkey,
           sender: user,
           position,
@@ -3608,7 +3502,7 @@ export class DLMM {
           .claimReward2(new BN(i), fromBinId, toBinId, {
             slices,
           })
-          .accounts({
+          .accountsPartial({
             lbPair: this.pubkey,
             sender: user,
             position,
@@ -3627,7 +3521,7 @@ export class DLMM {
 
       const closePositionIx = await this.program.methods
         .closePositionIfEmpty()
-        .accounts({
+        .accountsPartial({
           rentReceiver: owner, // Must be position owner
           position,
           sender: user,
@@ -3659,7 +3553,7 @@ export class DLMM {
       .removeLiquidityByRange2(fromBinId, toBinId, bps.toNumber(), {
         slices,
       })
-      .accounts({
+      .accountsPartial({
         position,
         lbPair,
         userTokenX,
@@ -3739,7 +3633,7 @@ export class DLMM {
   }): Promise<Transaction> {
     const closePositionIfEmptyIx = await this.program.methods
       .closePositionIfEmpty()
-      .accounts({
+      .accountsPartial({
         rentReceiver: owner,
         position: position.publicKey,
         sender: owner,
@@ -3778,7 +3672,7 @@ export class DLMM {
   }): Promise<Transaction> {
     const closePositionIx = await this.program.methods
       .closePosition2()
-      .accounts({
+      .accountsPartial({
         rentReceiver: owner,
         position: position.publicKey,
         sender: owner,
@@ -4320,7 +4214,7 @@ export class DLMM {
 
     const swapIx = await this.program.methods
       .swapExactOut2(maxInAmount, outAmount, { slices })
-      .accounts({
+      .accountsPartial({
         lbPair,
         reserveX: this.lbPair.reserveX,
         reserveY: this.lbPair.reserveY,
@@ -4447,7 +4341,7 @@ export class DLMM {
         priceImpact.toNumber(),
         { slices }
       )
-      .accounts({
+      .accountsPartial({
         lbPair,
         reserveX: this.lbPair.reserveX,
         reserveY: this.lbPair.reserveY,
@@ -4569,7 +4463,7 @@ export class DLMM {
 
     const swapIx = await this.program.methods
       .swap2(inAmount, minOutAmount, { slices })
-      .accounts({
+      .accountsPartial({
         lbPair,
         reserveX: this.lbPair.reserveX,
         reserveY: this.lbPair.reserveY,
@@ -4723,7 +4617,7 @@ export class DLMM {
   public async setActivationPoint(activationPoint: BN) {
     const setActivationPointTx = await this.program.methods
       .setActivationPoint(activationPoint)
-      .accounts({
+      .accountsPartial({
         lbPair: this.pubkey,
         admin: this.lbPair.creator,
       })
@@ -4743,7 +4637,7 @@ export class DLMM {
     const pairStatus = enabled ? 0 : 1;
     const tx = await this.program.methods
       .setPairStatus(pairStatus)
-      .accounts({
+      .accountsPartial({
         lbPair: this.pubkey,
         admin: this.lbPair.creator,
       })
@@ -5116,8 +5010,10 @@ export class DLMM {
     const transferHookAccountMetas = this.tokenX.transferHookAccountMetas;
 
     for (let i = 0; i < positionCount.toNumber(); i++) {
-      const lowerBinId = minBinId.add(MAX_BIN_PER_POSITION.mul(new BN(i)));
-      const upperBinId = lowerBinId.add(MAX_BIN_PER_POSITION).sub(new BN(1));
+      const lowerBinId = minBinId.add(DEFAULT_BIN_PER_POSITION.mul(new BN(i)));
+      const upperBinId = lowerBinId
+        .add(DEFAULT_BIN_PER_POSITION)
+        .sub(new BN(1));
 
       const binArrayAccountMetas = getBinArrayAccountMetasCoverage(
         lowerBinId,
@@ -5135,7 +5031,7 @@ export class DLMM {
         this.pubkey,
         base,
         lowerBinId,
-        MAX_BIN_PER_POSITION,
+        DEFAULT_BIN_PER_POSITION,
         this.program.programId
       );
 
@@ -5161,7 +5057,7 @@ export class DLMM {
           instructions.push(
             await this.program.methods
               .initializeBinArray(index)
-              .accounts({
+              .accountsPartial({
                 lbPair: this.pubkey,
                 binArray: pubkey,
                 funder: payer,
@@ -5180,11 +5076,11 @@ export class DLMM {
           await this.program.methods
             .initializePositionByOperator(
               lowerBinId.toNumber(),
-              MAX_BIN_PER_POSITION.toNumber(),
+              DEFAULT_BIN_PER_POSITION.toNumber(),
               feeOwner,
               lockReleasePoint
             )
-            .accounts({
+            .accountsPartial({
               lbPair: this.pubkey,
               position: positionPda,
               base,
@@ -5207,11 +5103,11 @@ export class DLMM {
 
       const positionDeposited =
         positionAccount &&
-        this.program.coder.accounts
-          .decode<PositionV2>(
-            this.program.account.positionV2.idlAccount.name,
-            positionAccount.data
-          )
+        decodeAccount<PositionV2>(
+          this.program,
+          "positionV2",
+          positionAccount.data
+        )
           .liquidityShares.reduce((total, cur) => total.add(cur), new BN(0))
           .gt(new BN(0));
 
@@ -5267,7 +5163,7 @@ export class DLMM {
                 slices,
               }
             )
-            .accounts({
+            .accountsPartial({
               position: positionPda,
               lbPair: this.pubkey,
               binArrayBitmapExtension: overflowDefaultBinArrayBitmap
@@ -5313,7 +5209,7 @@ export class DLMM {
                   slices,
                 }
               )
-              .accounts({
+              .accountsPartial({
                 position: positionPda,
                 lbPair: this.pubkey,
                 binArrayBitmapExtension: overflowDefaultBinArrayBitmap
@@ -5473,7 +5369,7 @@ export class DLMM {
         preInstructions.push(
           await this.program.methods
             .initializeBinArrayBitmapExtension()
-            .accounts({
+            .accountsPartial({
               binArrayBitmapExtension,
               funder: payer,
               lbPair: this.pubkey,
@@ -5572,7 +5468,7 @@ export class DLMM {
       preInstructions.push(
         await this.program.methods
           .initializeBinArray(binArrayIndex)
-          .accounts({
+          .accountsPartial({
             binArray: binArrayKey,
             funder: payer,
             lbPair: this.pubkey,
@@ -5593,7 +5489,7 @@ export class DLMM {
             feeOwner,
             lockReleasePoint
           )
-          .accounts({
+          .accountsPartial({
             payer,
             base,
             position: positionPda,
@@ -5642,7 +5538,7 @@ export class DLMM {
       .addLiquidity2(addLiquidityParams, {
         slices,
       })
-      .accounts({
+      .accountsPartial({
         position: positionPda,
         lbPair: this.pubkey,
         binArrayBitmapExtension,
@@ -5703,7 +5599,7 @@ export class DLMM {
       if (binArrayAccount === null) {
         const initBinArrayIx = await this.program.methods
           .initializeBinArray(idx)
-          .accounts({
+          .accountsPartial({
             binArray,
             funder,
             lbPair: this.pubkey,
@@ -5783,11 +5679,11 @@ export class DLMM {
     const initializePositionByOperatorTx = await this.program.methods
       .initializePositionByOperator(
         lowerBinId.toNumber(),
-        MAX_BIN_PER_POSITION.toNumber(),
+        DEFAULT_BIN_PER_POSITION.toNumber(),
         feeOwner,
         lockReleasePoint
       )
-      .accounts({
+      .accountsPartial({
         lbPair: this.pubkey,
         position: positionPda,
         base,
@@ -6015,7 +5911,7 @@ export class DLMM {
       await this.program.provider.connection.getLatestBlockhash("confirmed");
     const syncWithMarketPriceTx = await this.program.methods
       .goToABin(marketPriceBinId)
-      .accounts({
+      .accountsPartial({
         lbPair: this.pubkey,
         binArrayBitmapExtension,
         fromBinArray,
@@ -6552,7 +6448,7 @@ export class DLMM {
         ixs.push(
           await this.program.methods
             .initializeBinArray(idx)
-            .accounts({
+            .accountsPartial({
               binArray: binArrayKey,
               funder,
               lbPair: this.pubkey,
@@ -6639,7 +6535,7 @@ export class DLMM {
         .claimReward2(new BN(i), lowerBinId, upperBinId, {
           slices,
         })
-        .accounts({
+        .accountsPartial({
           lbPair: this.pubkey,
           sender: owner,
           position: position.publicKey,
@@ -6722,7 +6618,7 @@ export class DLMM {
       .claimFee2(lowerBinId, upperBinId, {
         slices,
       })
-      .accounts({
+      .accountsPartial({
         lbPair: this.pubkey,
         sender: owner,
         position: position.publicKey,
