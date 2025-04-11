@@ -2513,6 +2513,8 @@ export class DLMM {
     const initPositionIxs: TransactionInstruction[][] = [];
     const initBinArrayIxs: TransactionInstruction[][] = [];
 
+    const binArrayIndexSet = new Set<number>();
+
     for (let i = 0; i < positionCount; i++) {
       const positionKeypair = Keypair.generate();
       positionKeypairs.push(positionKeypair);
@@ -2537,7 +2539,7 @@ export class DLMM {
       const binArrayIndexes = getBinArrayIndexesCoverage(
         new BN(minBinId),
         new BN(maxBinId)
-      );
+      ).filter((idx) => !binArrayIndexSet.has(idx.toNumber()));
 
       const createBinArrayIxs = await this.createBinArraysIfNeeded(
         binArrayIndexes,
@@ -2550,6 +2552,10 @@ export class DLMM {
           ix,
         ])
       );
+
+      binArrayIndexes.map((idx) => {
+        binArrayIndexSet.add(idx.toNumber());
+      });
 
       initBinArrayIxs.push(...createBinArrayIxs);
     }
