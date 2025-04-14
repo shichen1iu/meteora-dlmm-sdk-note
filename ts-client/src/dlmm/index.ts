@@ -3134,14 +3134,14 @@ export class DLMM {
     return {
       initPositionIxs: initPositionIxs.map((ixs) => {
         return new Transaction({
-          feePayer: this.lbPair.creator,
+          feePayer: user,
           blockhash,
           lastValidBlockHeight,
         }).add(...ixs);
       }),
       addLiquidityIxs: addLiquidityIxs.map((ixs) => {
         return new Transaction({
-          feePayer: this.lbPair.creator,
+          feePayer: user,
           blockhash,
           lastValidBlockHeight,
         }).add(...ixs);
