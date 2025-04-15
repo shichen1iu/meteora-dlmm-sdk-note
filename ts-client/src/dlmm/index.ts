@@ -1151,9 +1151,10 @@ export class DLMM {
     });
 
     // filter positions has lock_release_point > currentTimestamp + lockDurationSecs
-    const clockAccInfo = await this.program.provider.connection.getAccountInfo(
-      SYSVAR_CLOCK_PUBKEY
-    );
+    const clockAccInfo =
+      await this.program.provider.connection.getAccountInfo(
+        SYSVAR_CLOCK_PUBKEY
+      );
     const clock = ClockLayout.decode(clockAccInfo.data) as Clock;
 
     const currentPoint =
@@ -1567,9 +1568,8 @@ export class DLMM {
       tokenBadgeY,
     ]);
 
-    const presetParameterState = await program.account.presetParameter2.fetch(
-      presetParameter
-    );
+    const presetParameterState =
+      await program.account.presetParameter2.fetch(presetParameter);
 
     const existsPool = await this.getPairPubkeyIfExists(
       connection,
@@ -2537,8 +2537,8 @@ export class DLMM {
 
       // 2. Create bin arrays
       const binArrayIndexes = getBinArrayIndexesCoverage(
-        new BN(minBinId),
-        new BN(maxBinId)
+        new BN(lowerBinId),
+        new BN(upperBinId)
       ).filter((idx) => !binArrayIndexSet.has(idx.toNumber()));
 
       const createBinArrayIxs = await this.createBinArraysIfNeeded(
@@ -3716,9 +3716,8 @@ export class DLMM {
       ? Math.ceil(slippage / (this.lbPair.binStep / 100))
       : MAX_ACTIVE_BIN_SLIPPAGE;
 
-    const positionAccount = await this.program.account.positionV2.fetch(
-      positionPubKey
-    );
+    const positionAccount =
+      await this.program.account.positionV2.fetch(positionPubKey);
     const { lowerBinId, upperBinId, binIds } =
       this.processXYAmountDistribution(xYAmountDistribution);
 
@@ -4219,7 +4218,7 @@ export class DLMM {
         : this.program.programId;
 
       const removeLiquidityTx = await this.program.methods
-        .removeLiquidityByRange2(fromBinId, toBinId, bps.toNumber(), {
+        .removeLiquidityByRange2(lowerBinId, upperBinId, bps.toNumber(), {
           slices,
         })
         .accountsPartial({
