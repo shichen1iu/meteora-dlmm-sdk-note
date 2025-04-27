@@ -2738,6 +2738,7 @@ dependencies = [
  "anchor-spl",
  "anyhow",
  "bs58",
+ "bytemuck",
  "chrono",
  "clap",
  "commons",
