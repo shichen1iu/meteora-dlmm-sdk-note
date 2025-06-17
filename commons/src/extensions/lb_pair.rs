@@ -68,39 +68,62 @@ impl LbPairExtension for LbPair {
         Ok(self.activation_type.try_into()?)
     }
 
+    // 更新用于计算动态费用的参考值
+    // 在 Meteora DLMM 中，交易手续费的一部分是根据市场波动性动态调整的，而这个函数就是实现该动态调整机制的关键一步
     fn update_references(&mut self, current_timestamp: i64) -> Result<()> {
+        //v_params (v_parameters)：指的是可变参数 (Variable Parameters)。
+        //这些是随着市场活动（如交易）而频繁变化的参数，例如上次更新的时间戳、波动率累加器等
         let v_params = &mut self.v_parameters;
+        //s_params (parameters)：指的是静态参数 (Static Parameters)。
+        //这些是创建流动性池时就已设定的、通常不会改变的参数，例如各种费率、时间周期等
         let s_params = &self.parameters;
 
+        //计算距离上一次成功更新过去了多长时间
         let elapsed = current_timestamp
             .checked_sub(v_params.last_update_timestamp)
             .context("overflow")?;
 
         // Not high frequency trade
+        //只有当经过的时间 elapsed 超过了预设的 filter_period（过滤周期），
+        //函数内的逻辑才会执行。这可以防止在高频交易场景下过于频繁地更新参考值，起到节流的作用
         if elapsed >= s_params.filter_period as i64 {
-            // Update active id of last transaction
+            //如果满足更新条件，它会立刻将当前活跃的流动性仓位ID (self.active_id)
+            //保存到 index_reference 中。这个 index_reference 就像一个快照，
+            //记录了在这次更新时间点的市场价格位置。后续计算波动性时，
+            //就可以通过比较新的 active_id 和这个 index_reference 的差距来判断价格变动了多少
             v_params.index_reference = self.active_id;
-            // filter period < t < decay_period. Decay time window.
+            //根据 elapsed 的时间长度来处理波动率参考值 (volatility_reference)
+            //如果 elapsed 大于 filter_period 但小于 decay_period（衰减周期），则进入“衰减”模式
             if elapsed < s_params.decay_period as i64 {
+                //当前的 volatility_accumulator（波动率累加器）乘以一个 reduction_factor（衰减因子，一个小于1的系数）。
+                //这会使累积的波动率值随着时间的推移而逐渐降低或“衰减”
                 let volatility_reference = v_params
                     .volatility_accumulator
                     .checked_mul(s_params.reduction_factor as u32)
                     .context("overflow")?
                     .checked_div(BASIS_POINT_MAX as u32)
                     .context("overflow")?;
-
+                //衰减后的新值被存入 volatility_reference
                 v_params.volatility_reference = volatility_reference;
             }
-            // Out of decay time window
+            // 如果 elapsed 连 decay_period 都超过了，说明市场已经很长时间没有满足更新条件的活动
+            //在这种情况下，代码会直接将 volatility_reference 重置为 0。这意味着之前累积的波动率已经过时，失去了参考价值，因此被完全清除。
             else {
                 v_params.volatility_reference = 0;
             }
+            // volatility_reference的作用:
+            //提供一个随时间衰减的波动性基准值。它作为计算当前实时波动率 (volatility_accumulator) 的起始点或底数
         }
 
         Ok(())
     }
 
+    //实时计算和更新池子的“波动率累加器”
+    //这个累加器是 Meteora DLMM 动态费用机制的核心，它的值越高，交易者需要支付的可变费用（Variable Fee）就越多
+    //简单来说，这个函数在交易过程中的每一步（每消耗一个 Bin 的流动性）都会被调用
+    //更完整解释可以看笔记
     fn update_volatility_accumulator(&mut self) -> Result<()> {
+        //v_params.index_reference: 这是上一次“参考点更新”（通过 update_references 函数）时记录的价格快照（当时的 active_id）。
         let v_params = &mut self.v_parameters;
         let s_params = &self.parameters;
 

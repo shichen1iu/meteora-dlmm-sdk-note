@@ -61,6 +61,7 @@ impl BinExtension for Bin {
         }
     }
 
+    // price = (amount_Y / amount_X) * 2^64
     fn get_amount_out(amount_in: u64, price: u128, swap_for_y: bool) -> Result<u64> {
         if swap_for_y {
             safe_mul_shr_cast(price, amount_in.into(), SCALE_OFFSET, Rounding::Down)
@@ -86,6 +87,7 @@ impl BinExtension for Bin {
         Ok((out_amount_x, out_amount_y))
     }
 
+    //接收一笔输入金额 amount_in，计算出在这个窗口能兑换到多少输出金额 amount_out，需要支付多少手续费 fee，并最终更新窗口的库存。
     fn swap(
         &mut self,
         amount_in: u64,
@@ -94,12 +96,21 @@ impl BinExtension for Bin {
         lb_pair: &LbPair,
         host_fee_bps: Option<u16>,
     ) -> Result<SwapResult> {
+        //函数会检查这个窗口最多有多少外币可以给你。这就是这个 Bin 的最大兑换能力。
         let max_amount_out = self.get_max_amount_out(swap_for_y);
+        //它计算要把这些外币全部换走，理论上需要多少输入货币
         let mut max_amount_in = self.get_max_amount_in(price, swap_for_y)?;
 
+        //它计算换走全部外币需要支付的最高手续费。
         let max_fee = lb_pair.compute_fee(max_amount_in)?;
+        //将理论输入和最高手续费相加，得到掏空这个窗口所需的总成本 max_amount_in。
         max_amount_in = max_amount_in.checked_add(max_fee).context("overflow")?;
 
+        //情况一：你的钱太多，窗口不够换。你带来的钱 (amount_in) 比掏空这个窗口所需的总成本还多
+        //在这种情况下，交易会被窗口的库存限制。
+        // amount_in_with_fees: 你实际支付的金额就是掏空窗口的成本 max_amount_in。
+        //支付的手续费就是最高手续费 max_fee。
+        // 你多余的钱会留着去下一个窗口
         let (amount_in_with_fees, amount_out, fee, protocol_fee) = if amount_in > max_amount_in {
             (
                 max_amount_in,
@@ -108,8 +119,12 @@ impl BinExtension for Bin {
                 lb_pair.compute_protocol_fee(max_fee)?,
             )
         } else {
+            //情况二：你的钱没那么多，窗口够换。你带来的钱少于或等于掏空窗口的成本。
+            //根据你的总输入金额 amount_in，计算出应付的手续费。
             let fee = lb_pair.compute_fee_from_amount(amount_in)?;
+            //从你的总输入中减去手续费，得到真正用于兑换的净额。
             let amount_in_after_fee = amount_in.checked_sub(fee).context("overflow")?;
+            //用这个净额，按当前窗口的固定汇率 price，计算出你能得到多少外币 amount_out。
             let amount_out = Bin::get_amount_out(amount_in_after_fee, price, swap_for_y)?;
             (
                 amount_in,

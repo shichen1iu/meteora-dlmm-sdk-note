@@ -144,7 +144,7 @@ pub const LB_PAIR_ACCOUNT_DISCM: [u8; 8] = [33, 11, 49, 98, 181, 101, 177, 13];
 #[repr(C)]
 #[derive(Clone, Debug, BorshDeserialize, BorshSerialize, PartialEq, Pod, Copy, Zeroable)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct LbPair {
+pub struct  LbPair {
     pub parameters: StaticParameters,
     pub v_parameters: VariableParameters,
     pub bump_seed: [u8; 1],

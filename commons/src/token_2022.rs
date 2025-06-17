@@ -146,6 +146,7 @@ pub struct TransferFeeExcludedAmount {
     pub transfer_fee: u64,
 }
 
+//计算在 Solana 的 Token-2022 标准下，一笔转账金额在扣除内置转账费（Transfer Fee）后，实际到账的净额是多少
 pub fn calculate_transfer_fee_excluded_amount(
     mint_account: &Account,
     transfer_fee_included_amount: u64,
